@@ -183,6 +183,85 @@ def test_filesystem_search_no_matches(workspace):
     assert "sin coincidencias" in res.content.lower()
 
 
+def test_filesystem_append(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="log.txt", content="linea1\n")
+    res = tool.run(operation="append", path="log.txt", content="linea2\n")
+    assert res.ok
+    assert tool.run(operation="read", path="log.txt").content == "linea1\nlinea2\n"
+
+
+def test_filesystem_mkdir(workspace):
+    tool = FileSystemTool(root=workspace)
+    res = tool.run(operation="mkdir", path="nueva/carpeta")
+    assert res.ok
+    assert (Path(workspace) / "nueva" / "carpeta").is_dir()
+
+
+def test_filesystem_move_renames(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="viejo.txt", content="x")
+    res = tool.run(operation="move", path="viejo.txt", destination="sub/nuevo.txt")
+    assert res.ok
+    assert not (Path(workspace) / "viejo.txt").exists()
+    assert (Path(workspace) / "sub" / "nuevo.txt").read_text(encoding="utf-8") == "x"
+
+
+def test_filesystem_copy(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="orig.txt", content="dato")
+    res = tool.run(operation="copy", path="orig.txt", destination="copia.txt")
+    assert res.ok
+    assert (Path(workspace) / "orig.txt").exists()
+    assert (Path(workspace) / "copia.txt").read_text(encoding="utf-8") == "dato"
+
+
+def test_filesystem_move_requires_destination(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="a.txt", content="x")
+    res = tool.run(operation="move", path="a.txt")
+    assert not res.ok
+    assert "destination" in res.error.lower()
+
+
+def test_filesystem_copy_refuses_overwrite(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="a.txt", content="x")
+    tool.run(operation="write", path="b.txt", content="y")
+    res = tool.run(operation="copy", path="a.txt", destination="b.txt")
+    assert not res.ok
+    assert "ya existe" in res.error.lower()
+
+
+def test_filesystem_delete_file(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="borrame.txt", content="x")
+    res = tool.run(operation="delete", path="borrame.txt")
+    assert res.ok
+    assert not (Path(workspace) / "borrame.txt").exists()
+
+
+def test_filesystem_delete_nonempty_dir_requires_recursive(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="dir/f.txt", content="x")
+
+    res = tool.run(operation="delete", path="dir")
+    assert not res.ok
+    assert "no está vacío" in res.error.lower()
+
+    res2 = tool.run(operation="delete", path="dir", recursive=True)
+    assert res2.ok
+    assert not (Path(workspace) / "dir").exists()
+
+
+def test_filesystem_management_respects_secrets(workspace):
+    tool = FileSystemTool(root=workspace)
+    # No se puede borrar ni mover un fichero de secretos (bloqueado al resolver).
+    (Path(workspace) / ".env").write_text("k", encoding="utf-8")
+    assert not tool.run(operation="delete", path=".env").ok
+    assert not tool.run(operation="copy", path="normal.txt", destination=".env").ok
+
+
 def test_default_denied_roots_nonempty():
     roots = default_denied_roots()
     assert roots

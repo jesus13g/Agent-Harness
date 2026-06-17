@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -87,25 +88,41 @@ class FileSystemTool(Tool):
         "properties": {
             "operation": {
                 "type": "string",
-                "enum": ["read", "write", "list", "search"],
+                "enum": [
+                    "read", "write", "list", "search",
+                    "append", "mkdir", "move", "copy", "delete",
+                ],
                 "description": "Operación a realizar.",
             },
             "path": {
                 "type": "string",
                 "description": (
                     "Ruta del fichero o directorio. Para 'search', el directorio "
-                    "base desde el que buscar de forma recursiva."
+                    "base. Para 'move'/'copy', el origen."
                 ),
             },
             "content": {
                 "type": "string",
-                "description": "Contenido a escribir (solo para 'write').",
+                "description": "Contenido a escribir (para 'write' y 'append').",
             },
             "pattern": {
                 "type": "string",
                 "description": (
                     "Patrón glob de nombre de fichero para 'search', "
                     "p. ej. '*.txt' o 'informe*.pdf'."
+                ),
+            },
+            "destination": {
+                "type": "string",
+                "description": (
+                    "Ruta destino para 'move' (mover/renombrar) y 'copy'."
+                ),
+            },
+            "recursive": {
+                "type": "boolean",
+                "description": (
+                    "Para 'delete' de un directorio no vacío: si es true, borra "
+                    "el directorio y todo su contenido. Por defecto false."
                 ),
             },
         },
@@ -145,52 +162,75 @@ class FileSystemTool(Tool):
             if self._block_secrets
             else ""
         )
+        ops = (
+            "Operaciones: 'read', 'write', 'list', 'search' (busqueda recursiva "
+            "por nombre con 'pattern' glob desde un directorio base 'path'), "
+            "'append' (añade 'content' al final), 'mkdir' (crea un directorio), "
+            "'move' (mueve o renombra de 'path' a 'destination'), 'copy' (copia "
+            "de 'path' a 'destination') y 'delete' (borra; para directorios no "
+            "vacios usa 'recursive': true)."
+        )
         if self._system:
             return (
-                "Lee, escribe, lista o busca ficheros en CUALQUIER lugar del "
-                "sistema. Puedes usar rutas absolutas (p. ej. "
-                "'C:\\\\Users\\\\...\\\\doc.txt') o relativas al directorio actual. "
-                "Operaciones: 'read', 'write', 'list', y 'search' (busqueda "
-                "recursiva por nombre con un 'pattern' glob desde un directorio "
-                "base 'path'). Las carpetas de sistema (Windows, Program Files, "
-                f"etc.) están bloqueadas.{secrets}"
+                "Gestiona ficheros en CUALQUIER lugar del sistema. Puedes usar "
+                "rutas absolutas (p. ej. 'C:\\\\Users\\\\...\\\\doc.txt') o "
+                f"relativas al directorio actual. {ops} Las carpetas de sistema "
+                f"(Windows, Program Files, etc.) están bloqueadas.{secrets}"
             )
         return (
-            "Lee, escribe, lista o busca ficheros dentro del directorio de "
-            f"trabajo ('{self._root}'). Operaciones: 'read', 'write', 'list', y "
-            "'search' (busqueda recursiva por nombre con un 'pattern' glob desde "
-            "un directorio base 'path'). Las rutas son relativas a ese directorio "
-            f"y no se puede salir de él.{secrets}"
+            "Gestiona ficheros dentro del directorio de trabajo "
+            f"('{self._root}'). {ops} Las rutas son relativas a ese directorio y "
+            f"no se puede salir de él.{secrets}"
         )
+
+    _OPERATIONS = (
+        "read", "write", "list", "search",
+        "append", "mkdir", "move", "copy", "delete",
+    )
 
     def run(self, **kwargs: Any) -> ToolResult:
         operation = kwargs.get("operation")
         path = kwargs.get("path")
         content = kwargs.get("content")
         pattern = kwargs.get("pattern")
+        destination = kwargs.get("destination")
+        recursive = bool(kwargs.get("recursive", False))
 
-        if operation not in ("read", "write", "list", "search"):
+        if operation not in self._OPERATIONS:
             return ToolResult.failure(
-                "'operation' debe ser 'read', 'write', 'list' o 'search'."
+                f"'operation' debe ser uno de: {', '.join(self._OPERATIONS)}."
             )
         if not isinstance(path, str) or not path:
             return ToolResult.failure("Se requiere 'path' (string no vacío).")
+        if operation in ("move", "copy") and (
+            not isinstance(destination, str) or not destination
+        ):
+            return ToolResult.failure(
+                f"Se requiere 'destination' (string no vacío) para '{operation}'."
+            )
 
         try:
             target = self._resolve(path)
-        except _OutsideSandbox as exc:
-            return ToolResult.failure(str(exc))
-        except _BlockedPath as exc:
-            return ToolResult.failure(str(exc))
-        except _BlockedSecret as exc:
+            dest = self._resolve(destination) if operation in ("move", "copy") else None
+        except (_OutsideSandbox, _BlockedPath, _BlockedSecret) as exc:
             return ToolResult.failure(str(exc))
 
         if operation == "read":
             return self._read(target)
         if operation == "write":
             return self._write(target, content)
+        if operation == "append":
+            return self._append(target, content)
         if operation == "search":
             return self._search(target, pattern)
+        if operation == "mkdir":
+            return self._mkdir(target)
+        if operation == "move":
+            return self._move(target, dest)
+        if operation == "copy":
+            return self._copy(target, dest)
+        if operation == "delete":
+            return self._delete(target, recursive)
         return self._list(target)
 
     # ------------------------------------------------------------------ #
@@ -250,12 +290,80 @@ class FileSystemTool(Tool):
             return ToolResult.failure("'content' es obligatorio (string) para 'write'.")
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            # write_bytes evita la traducción de saltos de línea, así lo escrito
+            # se lee de vuelta byte a byte idéntico (coherente con _read).
+            target.write_bytes(content.encode("utf-8"))
         except OSError as exc:
             return ToolResult.failure(f"No se pudo escribir {self._rel(target)}: {exc}")
         return ToolResult.success(
             f"Escritos {len(content)} caracteres en {self._rel(target)}."
         )
+
+    def _append(self, target: Path, content: Any) -> ToolResult:
+        if not isinstance(content, str):
+            return ToolResult.failure("'content' es obligatorio (string) para 'append'.")
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("ab") as fh:
+                fh.write(content.encode("utf-8"))
+        except OSError as exc:
+            return ToolResult.failure(f"No se pudo añadir a {self._rel(target)}: {exc}")
+        return ToolResult.success(
+            f"Añadidos {len(content)} caracteres a {self._rel(target)}."
+        )
+
+    def _mkdir(self, target: Path) -> ToolResult:
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return ToolResult.failure(f"No se pudo crear {self._rel(target)}: {exc}")
+        return ToolResult.success(f"Directorio creado: {self._rel(target)}.")
+
+    def _move(self, src: Path, dst: Path | None) -> ToolResult:
+        assert dst is not None
+        if not src.exists():
+            return ToolResult.failure(f"No existe el origen: {self._rel(src)}")
+        if dst.exists():
+            return ToolResult.failure(f"El destino ya existe: {self._rel(dst)}")
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dst))
+        except OSError as exc:
+            return ToolResult.failure(f"No se pudo mover a {self._rel(dst)}: {exc}")
+        return ToolResult.success(f"Movido {self._rel(src)} -> {self._rel(dst)}.")
+
+    def _copy(self, src: Path, dst: Path | None) -> ToolResult:
+        assert dst is not None
+        if not src.exists():
+            return ToolResult.failure(f"No existe el origen: {self._rel(src)}")
+        if dst.exists():
+            return ToolResult.failure(f"El destino ya existe: {self._rel(dst)}")
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_dir():
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+        except OSError as exc:
+            return ToolResult.failure(f"No se pudo copiar a {self._rel(dst)}: {exc}")
+        return ToolResult.success(f"Copiado {self._rel(src)} -> {self._rel(dst)}.")
+
+    def _delete(self, target: Path, recursive: bool) -> ToolResult:
+        if not target.exists():
+            return ToolResult.failure(f"No existe la ruta: {self._rel(target)}")
+        try:
+            if target.is_dir():
+                if any(target.iterdir()) and not recursive:
+                    return ToolResult.failure(
+                        f"El directorio no está vacío: {self._rel(target)}. "
+                        "Usa 'recursive': true para borrarlo con su contenido."
+                    )
+                shutil.rmtree(target) if recursive else target.rmdir()
+            else:
+                target.unlink()
+        except OSError as exc:
+            return ToolResult.failure(f"No se pudo borrar {self._rel(target)}: {exc}")
+        return ToolResult.success(f"Borrado: {self._rel(target)}.")
 
     def _list(self, target: Path) -> ToolResult:
         if not target.exists():
