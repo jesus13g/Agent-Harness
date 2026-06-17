@@ -7,13 +7,23 @@ interfaz (REST, WebSocket, chat) se construye igual, sin tocar el núcleo.
 Uso:
     python -m agente "¿Cuánto es (12**2 + 8) / 4?"
     python -m agente            # modo interactivo (REPL)
+    python -m agente -dap ...   # acceso total al sistema de ficheros
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 
+from agente.config.settings import Settings
 from agente.service.agent_service import AgentService
+
+
+def _build_service(dap: bool) -> AgentService:
+    settings = Settings()
+    if dap:
+        settings.fs_access_mode = "system"
+    return AgentService(settings)
 
 
 def _run_once(service: AgentService, task: str) -> int:
@@ -44,10 +54,25 @@ def _repl(service: AgentService) -> int:
 
 
 def main() -> int:
-    service = AgentService()
-    args = sys.argv[1:]
-    if args:
-        return _run_once(service, " ".join(args))
+    parser = argparse.ArgumentParser(
+        prog="agente",
+        description="Agente orquestador (CLI de ejemplo).",
+    )
+    parser.add_argument(
+        "-dap",
+        action="store_true",
+        help="Acceso total al sistema de ficheros (salvo carpetas delicadas y secretos).",
+    )
+    parser.add_argument(
+        "task",
+        nargs="*",
+        help="Tarea a ejecutar. Si se omite, arranca el modo interactivo (REPL).",
+    )
+    args = parser.parse_args()
+
+    service = _build_service(args.dap)
+    if args.task:
+        return _run_once(service, " ".join(args.task))
     return _repl(service)
 
 

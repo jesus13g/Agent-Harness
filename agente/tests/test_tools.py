@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from agente.core.types import ToolResult
 from agente.infra.tools.calculator import CalculatorTool
-from agente.infra.tools.filesystem import FileSystemTool
+from agente.infra.tools.filesystem import FileSystemTool, default_denied_roots
 from agente.infra.tools.registry import ToolRegistry
 
 
@@ -70,6 +72,69 @@ def test_filesystem_blocks_path_traversal(workspace):
 def test_filesystem_read_missing_file(workspace):
     tool = FileSystemTool(root=workspace)
     assert not tool.run(operation="read", path="noexiste.txt").ok
+
+
+# --- FileSystem: niveles de acceso y bloqueos -------------------------------
+
+
+def test_scoped_blocks_secret_files(workspace):
+    tool = FileSystemTool(root=workspace)  # block_secrets=True por defecto
+    for secret in (".env", "id_rsa", "cert.pem"):
+        result = tool.run(operation="read", path=secret)
+        assert not result.ok
+        assert "secretos" in result.error.lower()
+
+
+def test_system_access_reads_outside_cwd(tmp_path):
+    target = tmp_path / "fuera.txt"
+    target.write_text("contenido externo", encoding="utf-8")
+
+    tool = FileSystemTool(system_access=True)
+    result = tool.run(operation="read", path=str(target))
+    assert result.ok
+    assert result.content == "contenido externo"
+
+
+def test_system_access_blocks_denied_root(tmp_path):
+    blocked = tmp_path / "sys"
+    blocked.mkdir()
+    (blocked / "f.txt").write_text("x", encoding="utf-8")
+
+    tool = FileSystemTool(system_access=True, denied_roots=[blocked])
+
+    read = tool.run(operation="read", path=str(blocked / "f.txt"))
+    assert not read.ok and "sistema protegida" in read.error.lower()
+
+    write = tool.run(operation="write", path=str(blocked / "nuevo.txt"), content="x")
+    assert not write.ok and "sistema protegida" in write.error.lower()
+
+    listing = tool.run(operation="list", path=str(blocked))
+    assert not listing.ok and "sistema protegida" in listing.error.lower()
+
+
+def test_system_access_blocks_secrets(tmp_path):
+    tool = FileSystemTool(system_access=True, denied_roots=[])
+    for secret in ("id_ed25519", "clave.pem", ".env"):
+        result = tool.run(operation="read", path=str(tmp_path / secret))
+        assert not result.ok
+        assert "secretos" in result.error.lower()
+
+
+def test_system_access_can_disable_secret_block(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("AGENTE_MINIMAX_API_KEY=zzz", encoding="utf-8")
+
+    tool = FileSystemTool(system_access=True, denied_roots=[], block_secrets=False)
+    result = tool.run(operation="read", path=str(env_file))
+    assert result.ok and "zzz" in result.content
+
+
+def test_default_denied_roots_nonempty():
+    roots = default_denied_roots()
+    assert roots
+    if os.name == "nt":
+        joined = " ".join(str(p).lower() for p in roots)
+        assert "windows" in joined
 
 
 # --- Registry ---------------------------------------------------------------

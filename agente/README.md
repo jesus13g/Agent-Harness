@@ -85,10 +85,41 @@ y los adaptadores de `infra` implementan los puertos.
 | Herramienta   | Qué hace                                                        |
 |---------------|-----------------------------------------------------------------|
 | `calculator`  | Evalúa expresiones matemáticas de forma segura (AST, sin `eval`).|
-| `filesystem`  | Lee/escribe/lista ficheros dentro de un sandbox (`AGENTE_FS_ROOT`).|
+| `filesystem`  | Lee/escribe/lista ficheros (dos niveles de acceso, ver abajo).  |
 | `web_search`  | Búsqueda web vía DuckDuckGo Instant Answer (sin clave).         |
 
 Añadir una herramienta = implementar `Tool` y registrarla; el núcleo no cambia.
+
+## Modelo de seguridad — niveles de acceso a ficheros
+
+La herramienta `filesystem` tiene **dos niveles de acceso**:
+
+| Nivel | Cómo se activa | Alcance |
+|-------|----------------|---------|
+| **scoped** (por defecto) | nada que hacer | Solo el **directorio de trabajo** (CWD) y sus subcarpetas. |
+| **system** (total) | lanzar con **`-dap`** | **Todo el sistema** salvo carpetas delicadas. |
+
+```bash
+agente-tui            # scoped: solo el directorio actual
+agente-tui -dap       # system: acceso total (menos lo bloqueado)
+python -m agente -dap "lista C:\Users\...\Documents"
+```
+
+**Bloqueado en modo `system`** (carpetas de sistema): en Windows `C:\Windows`
+(incluye System32), `Program Files`, `Program Files (x86)`, `ProgramData`,
+`$Recycle.Bin`, `System Volume Information`, `Recovery`, `Boot`; en Linux/mac
+`/etc`, `/sys`, `/proc`, `/dev`, `/boot`, `/root`, `/bin`, `/sbin`, `/usr/bin`,
+`/usr/sbin`, `/var`.
+
+**Bloqueado en AMBOS modos** (secretos, `AGENTE_FS_BLOCK_SECRETS=true`):
+ficheros `.env`/`*.env`, claves `id_rsa*`/`id_ed25519*`/…, `*.pem`, y todo lo que
+esté bajo `.ssh`, `.aws`, `.gnupg`, `.azure`. Así el agente no puede leer su
+propia API key ni tus credenciales.
+
+> ⚠️ `-dap` da mucho poder al agente sobre tu disco (leer y **escribir** casi
+> cualquier fichero). Úsalo solo si entiendes las implicaciones. Las rutas se
+> resuelven con `Path.resolve()`, por lo que no se pueden evadir los bloqueos con
+> `..` ni con enlaces simbólicos.
 
 ## Pruebas
 

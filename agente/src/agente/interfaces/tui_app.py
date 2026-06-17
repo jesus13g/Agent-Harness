@@ -187,6 +187,8 @@ class AgenteTUI(App):
             "herramientas:",
         ]
         lines += [f"  - {name}" for name in self._service.list_tools()]
+        mode = "system (-dap)" if s.fs_access_mode == "system" else "scoped"
+        lines += ["", f"modo fs: {mode}"]
         lines += ["", f"tokens (sesion): {self._total_tokens}"]
         if not s.has_api_key:
             lines += ["", "AVISO: falta", "AGENTE_MINIMAX_API_KEY", "en .env"]
@@ -196,9 +198,26 @@ class AgenteTUI(App):
 def main() -> None:
     # Silencia los logs para no corromper la pantalla del TUI (el orquestador
     # registra en stderr a nivel INFO durante run_task).
+    import argparse
+
     from agente.config.settings import Settings
 
-    service = AgentService(Settings(log_level="CRITICAL"))
+    parser = argparse.ArgumentParser(
+        prog="agente-tui",
+        description="Agente orquestador (interfaz TUI).",
+    )
+    parser.add_argument(
+        "-dap",
+        action="store_true",
+        help="Acceso total al sistema de ficheros (salvo carpetas delicadas y secretos).",
+    )
+    args = parser.parse_args()
+
+    settings = Settings(log_level="CRITICAL")
+    if args.dap:
+        settings.fs_access_mode = "system"
+
+    service = AgentService(settings)
     AgenteTUI(service=service).run()
 
 

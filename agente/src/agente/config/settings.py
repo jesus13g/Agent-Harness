@@ -35,7 +35,13 @@ class Settings(BaseSettings):
     max_retries: int = Field(default=3, ge=0)
 
     # --- Herramientas ---
-    fs_root: str = Field(default="./workspace")
+    # Modo scoped: raíz del sandbox de ficheros (por defecto el directorio actual).
+    fs_root: str = Field(default=".")
+    # Nivel de acceso de la herramienta filesystem: "scoped" | "system".
+    # "system" (acceso total salvo carpetas delicadas) se activa con -dap.
+    fs_access_mode: str = Field(default="scoped")
+    # Bloquear ficheros de secretos (.env, claves) en ambos modos.
+    fs_block_secrets: bool = Field(default=True)
     enable_web_search: bool = Field(default=True)
 
     # --- Observabilidad ---

@@ -70,9 +70,18 @@ def build_default_registry(settings: Settings) -> ToolRegistry:
     from agente.infra.tools.filesystem import FileSystemTool
     from agente.infra.tools.web_search import WebSearchTool
 
+    if settings.fs_access_mode == "system":
+        fs_tool = FileSystemTool(
+            system_access=True, block_secrets=settings.fs_block_secrets
+        )
+    else:
+        fs_tool = FileSystemTool(
+            root=settings.fs_root, block_secrets=settings.fs_block_secrets
+        )
+
     tools: list[Tool] = [
         CalculatorTool(),
-        FileSystemTool(root=settings.fs_root),
+        fs_tool,
     ]
     if settings.enable_web_search:
         tools.append(WebSearchTool())
