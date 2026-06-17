@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -127,6 +128,59 @@ def test_system_access_can_disable_secret_block(tmp_path):
     tool = FileSystemTool(system_access=True, denied_roots=[], block_secrets=False)
     result = tool.run(operation="read", path=str(env_file))
     assert result.ok and "zzz" in result.content
+
+
+def test_filesystem_search_recursive(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="a/b/objetivo.txt", content="x")
+    tool.run(operation="write", path="otro.md", content="y")
+
+    res = tool.run(operation="search", path=".", pattern="*.txt")
+    assert res.ok
+    assert "objetivo.txt" in res.content
+    assert "otro.md" not in res.content
+
+
+def test_filesystem_search_skips_secrets(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="normal.txt", content="x")
+    # El .env se crea en disco directamente (write lo bloquea por ser secreto).
+    (Path(workspace) / ".env").write_text("secreto", encoding="utf-8")
+
+    res = tool.run(operation="search", path=".", pattern="*")
+    assert res.ok
+    assert "normal.txt" in res.content
+    assert ".env" not in res.content
+
+
+def test_filesystem_search_system_prunes_denied(tmp_path):
+    base = tmp_path / "base"
+    (base / "ok").mkdir(parents=True)
+    (base / "ok" / "found.log").write_text("x", encoding="utf-8")
+    denied = base / "secreta"
+    denied.mkdir()
+    (denied / "found.log").write_text("y", encoding="utf-8")
+
+    tool = FileSystemTool(system_access=True, denied_roots=[denied])
+    res = tool.run(operation="search", path=str(base), pattern="*.log")
+    assert res.ok
+    assert "found.log" in res.content
+    # Nada bajo la carpeta denegada debe aparecer.
+    assert all("secreta" not in line for line in res.content.splitlines())
+
+
+def test_filesystem_search_requires_pattern(workspace):
+    tool = FileSystemTool(root=workspace)
+    res = tool.run(operation="search", path=".")
+    assert not res.ok
+    assert "pattern" in res.error.lower()
+
+
+def test_filesystem_search_no_matches(workspace):
+    tool = FileSystemTool(root=workspace)
+    res = tool.run(operation="search", path=".", pattern="*.zzz")
+    assert res.ok
+    assert "sin coincidencias" in res.content.lower()
 
 
 def test_default_denied_roots_nonempty():

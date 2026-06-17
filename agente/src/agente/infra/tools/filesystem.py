@@ -28,6 +28,7 @@ from agente.core.types import ToolResult
 from agente.ports.tool import Tool
 
 _MAX_READ_BYTES = 200_000
+_MAX_SEARCH_RESULTS = 500
 
 
 def default_denied_roots() -> list[Path]:
@@ -86,16 +87,26 @@ class FileSystemTool(Tool):
         "properties": {
             "operation": {
                 "type": "string",
-                "enum": ["read", "write", "list"],
+                "enum": ["read", "write", "list", "search"],
                 "description": "Operación a realizar.",
             },
             "path": {
                 "type": "string",
-                "description": "Ruta del fichero o directorio.",
+                "description": (
+                    "Ruta del fichero o directorio. Para 'search', el directorio "
+                    "base desde el que buscar de forma recursiva."
+                ),
             },
             "content": {
                 "type": "string",
                 "description": "Contenido a escribir (solo para 'write').",
+            },
+            "pattern": {
+                "type": "string",
+                "description": (
+                    "Patrón glob de nombre de fichero para 'search', "
+                    "p. ej. '*.txt' o 'informe*.pdf'."
+                ),
             },
         },
         "required": ["operation", "path"],
@@ -136,25 +147,32 @@ class FileSystemTool(Tool):
         )
         if self._system:
             return (
-                "Lee, escribe o lista ficheros en CUALQUIER lugar del sistema. "
-                "Puedes usar rutas absolutas (p. ej. 'C:\\\\Users\\\\...\\\\doc.txt') "
-                "o relativas al directorio actual. Operaciones: 'read', 'write', "
-                "'list'. Las carpetas de sistema (Windows, Program Files, etc.) "
-                f"están bloqueadas.{secrets}"
+                "Lee, escribe, lista o busca ficheros en CUALQUIER lugar del "
+                "sistema. Puedes usar rutas absolutas (p. ej. "
+                "'C:\\\\Users\\\\...\\\\doc.txt') o relativas al directorio actual. "
+                "Operaciones: 'read', 'write', 'list', y 'search' (busqueda "
+                "recursiva por nombre con un 'pattern' glob desde un directorio "
+                "base 'path'). Las carpetas de sistema (Windows, Program Files, "
+                f"etc.) están bloqueadas.{secrets}"
             )
         return (
-            "Lee, escribe o lista ficheros dentro del directorio de trabajo "
-            f"('{self._root}'). Operaciones: 'read', 'write', 'list'. Las rutas "
-            f"son relativas a ese directorio y no se puede salir de él.{secrets}"
+            "Lee, escribe, lista o busca ficheros dentro del directorio de "
+            f"trabajo ('{self._root}'). Operaciones: 'read', 'write', 'list', y "
+            "'search' (busqueda recursiva por nombre con un 'pattern' glob desde "
+            "un directorio base 'path'). Las rutas son relativas a ese directorio "
+            f"y no se puede salir de él.{secrets}"
         )
 
     def run(self, **kwargs: Any) -> ToolResult:
         operation = kwargs.get("operation")
         path = kwargs.get("path")
         content = kwargs.get("content")
+        pattern = kwargs.get("pattern")
 
-        if operation not in ("read", "write", "list"):
-            return ToolResult.failure("'operation' debe ser 'read', 'write' o 'list'.")
+        if operation not in ("read", "write", "list", "search"):
+            return ToolResult.failure(
+                "'operation' debe ser 'read', 'write', 'list' o 'search'."
+            )
         if not isinstance(path, str) or not path:
             return ToolResult.failure("Se requiere 'path' (string no vacío).")
 
@@ -171,6 +189,8 @@ class FileSystemTool(Tool):
             return self._read(target)
         if operation == "write":
             return self._write(target, content)
+        if operation == "search":
+            return self._search(target, pattern)
         return self._list(target)
 
     # ------------------------------------------------------------------ #
@@ -195,9 +215,14 @@ class FileSystemTool(Tool):
         return candidate
 
     def _check_denied(self, candidate: Path) -> None:
-        for denied in self._denied:
-            if candidate == denied or denied in candidate.parents:
-                raise _BlockedPath(f"Ruta de sistema protegida: {candidate}")
+        if self._is_denied(candidate):
+            raise _BlockedPath(f"Ruta de sistema protegida: {candidate}")
+
+    def _is_denied(self, candidate: Path) -> bool:
+        return any(
+            candidate == denied or denied in candidate.parents
+            for denied in self._denied
+        )
 
     def _is_secret(self, candidate: Path) -> bool:
         parts = {part.lower() for part in candidate.parts}
@@ -246,6 +271,52 @@ class FileSystemTool(Tool):
             return ToolResult.failure(f"No se pudo listar {self._rel(target)}: {exc}")
         listing = "\n".join(entries) if entries else "(directorio vacío)"
         return ToolResult.success(listing)
+
+    def _search(self, base: Path, pattern: Any) -> ToolResult:
+        if not isinstance(pattern, str) or not pattern:
+            return ToolResult.failure(
+                "Se requiere 'pattern' (glob de nombre, p. ej. '*.txt') para 'search'."
+            )
+        if not base.is_dir():
+            return ToolResult.failure(f"El directorio base no existe: {self._rel(base)}")
+
+        matches: list[str] = []
+        truncated = False
+        # os.walk con onerror permite saltar carpetas sin permisos sin abortar.
+        for dirpath, dirnames, filenames in os.walk(base, onerror=lambda _e: None):
+            current = Path(dirpath)
+            # Podar carpetas bloqueadas para no descender en ellas.
+            kept = []
+            for name in dirnames:
+                child = (current / name).resolve()
+                if self._system and self._is_denied(child):
+                    continue
+                if self._block_secrets and self._is_secret(child):
+                    continue
+                kept.append(name)
+            dirnames[:] = kept
+
+            for name in filenames:
+                if not fnmatch.fnmatch(name, pattern):
+                    continue
+                full = current / name
+                if self._block_secrets and self._is_secret(full):
+                    continue
+                matches.append(self._rel(full))
+                if len(matches) >= _MAX_SEARCH_RESULTS:
+                    truncated = True
+                    break
+            if truncated:
+                break
+
+        if not matches:
+            return ToolResult.success(
+                f"Sin coincidencias para {pattern!r} en {self._rel(base)}."
+            )
+        result = "\n".join(sorted(matches))
+        if truncated:
+            result += f"\n(resultados truncados a {_MAX_SEARCH_RESULTS})"
+        return ToolResult.success(result)
 
     def _rel(self, target: Path) -> str:
         if self._system or self._root is None:
