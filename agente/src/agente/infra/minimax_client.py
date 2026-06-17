@@ -160,13 +160,16 @@ class MiniMaxClient(LLMClient):
 
     @staticmethod
     def _decode_response(data: dict[str, Any]) -> LLMResponse:
+        # MiniMax incluye siempre base_resp; status_code != 0 indica error de API
+        # aunque la respuesta HTTP sea 200.
+        base = data.get("base_resp") or {}
+        status = base.get("status_code", 0)
+        if status not in (0, None):
+            raise LLMError(_format_base_resp(status, base.get("status_msg", "")))
+
         choices = data.get("choices")
         if not choices:
-            # MiniMax devuelve base_resp con código de error en algunos fallos.
-            base = data.get("base_resp", {})
-            raise LLMError(
-                f"Respuesta sin 'choices': base_resp={base or data}"
-            )
+            raise LLMError(f"Respuesta inesperada de MiniMax (sin 'choices'): {data}")
 
         choice = choices[0]
         msg = choice.get("message", {})
@@ -196,6 +199,28 @@ class MiniMaxClient(LLMClient):
             usage=usage,
             raw=data,
         )
+
+
+# Códigos de error de MiniMax (campo base_resp.status_code) → mensaje claro.
+_BASE_RESP_MESSAGES = {
+    1000: "Error desconocido en MiniMax.",
+    1001: "Timeout en MiniMax: reintenta más tarde.",
+    1002: "Límite de frecuencia (rate limit) alcanzado en MiniMax.",
+    1004: "Autenticación fallida: revisa AGENTE_MINIMAX_API_KEY.",
+    1008: "Saldo insuficiente en tu cuenta MiniMax: recarga crédito para continuar.",
+    1013: "Error interno del servicio de MiniMax: reintenta más tarde.",
+    1027: "Contenido bloqueado por las políticas de MiniMax.",
+    1039: "Límite de tokens por minuto (TPM) alcanzado en MiniMax.",
+    2013: "Parámetros de la petición inválidos para MiniMax.",
+}
+
+
+def _format_base_resp(status: int, msg: str) -> str:
+    friendly = _BASE_RESP_MESSAGES.get(status)
+    detail = f" ({msg})" if msg else ""
+    if friendly:
+        return f"{friendly}{detail} [base_resp.status_code={status}]"
+    return f"Error de MiniMax{detail} [base_resp.status_code={status}]"
 
 
 def _parse_arguments(raw: Any) -> dict[str, Any]:

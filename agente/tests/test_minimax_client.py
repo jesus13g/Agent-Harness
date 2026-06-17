@@ -113,9 +113,20 @@ def test_5xx_is_retried_then_succeeds():
 
 def test_missing_choices_raises():
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"base_resp": {"status_code": 1004, "status_msg": "auth"}})
+        return httpx.Response(200, json={"choices": [], "base_resp": {"status_code": 0}})
 
     with pytest.raises(LLMError):
+        _client(handler).complete([Message(role=Role.USER, content="hola")])
+
+
+def test_base_resp_error_gives_friendly_message():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"base_resp": {"status_code": 1008, "status_msg": "insufficient balance"}},
+        )
+
+    with pytest.raises(LLMError, match="Saldo insuficiente"):
         _client(handler).complete([Message(role=Role.USER, content="hola")])
 
 
