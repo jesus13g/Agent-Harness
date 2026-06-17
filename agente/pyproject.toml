@@ -27,11 +27,11 @@ ui = [
 ]
 
 [project.scripts]
-agente = "agente.__main__:main"
-agente-tui = "agente.interfaces.tui_app:main"
+agente = "interfaces.cli:main"
+agente-tui = "interfaces.tui_app:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agente"]
+packages = ["src/agente", "src/factory", "src/interfaces"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

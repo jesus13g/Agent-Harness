@@ -3,13 +3,15 @@
 Mantiene el catálogo disponible, genera los esquemas que se pasan al modelo y
 resuelve nombre → ejecución. Añadir una herramienta = registrarla aquí o
 inyectarla; el orquestador no cambia.
+
+El catálogo *por defecto* (qué herramientas se habilitan según la configuración)
+es política de cableado y vive en la raíz de composición (`factory`), no aquí.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from agente.config.settings import Settings
 from agente.core.types import ToolResult, ToolSpec
 from agente.observability.logging import get_logger
 from agente.ports.tool import Tool
@@ -61,28 +63,3 @@ class ToolRegistry:
         except Exception as exc:  # noqa: BLE001 — frontera de seguridad
             _log.warning("tool.unhandled_error", tool=name, error=str(exc))
             return ToolResult.failure(f"La herramienta {name!r} falló: {exc}")
-
-
-def build_default_registry(settings: Settings) -> ToolRegistry:
-    """Construye el registro con las herramientas base habilitadas por config."""
-    # Import local para evitar ciclos y mantener ligero el módulo.
-    from agente.infra.tools.calculator import CalculatorTool
-    from agente.infra.tools.filesystem import FileSystemTool
-    from agente.infra.tools.web_search import WebSearchTool
-
-    if settings.fs_access_mode == "system":
-        fs_tool = FileSystemTool(
-            system_access=True, block_secrets=settings.fs_block_secrets
-        )
-    else:
-        fs_tool = FileSystemTool(
-            root=settings.fs_root, block_secrets=settings.fs_block_secrets
-        )
-
-    tools: list[Tool] = [
-        CalculatorTool(),
-        fs_tool,
-    ]
-    if settings.enable_web_search:
-        tools.append(WebSearchTool())
-    return ToolRegistry(tools)

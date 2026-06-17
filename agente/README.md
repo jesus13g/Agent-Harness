@@ -33,12 +33,13 @@ AGENTE_MODEL=MiniMax-M2.5
 
 ## Uso
 
-Como librería (la vía prevista para cualquier interfaz):
+Como librería (la vía prevista para cualquier interfaz). La fachada
+`AgentService` no se autoconstruye: la raíz de composición `factory` la cablea:
 
 ```python
-from agente import AgentService
+from factory import build_service, build_settings
 
-service = AgentService()
+service = build_service(build_settings())
 session_id = service.create_session()
 result = service.run_task(session_id, "¿Cuánto es (12**2 + 8) / 4 y guárdalo en r.txt?")
 print(result.output)
@@ -47,8 +48,9 @@ print(result.output)
 CLI de ejemplo (adaptador delgado sobre la fachada, no es parte del núcleo):
 
 ```bash
-python -m agente "¿Cuánto es 2**10?"
-python -m agente            # modo interactivo
+agente "¿Cuánto es 2**10?"
+agente                      # modo interactivo
+# o sin instalar el script: python -m interfaces.cli "¿Cuánto es 2**10?"
 ```
 
 Interfaz TUI en terminal con Textual (otra interfaz, también adaptador delgado):
@@ -56,29 +58,35 @@ Interfaz TUI en terminal con Textual (otra interfaz, también adaptador delgado)
 ```bash
 pip install -e ".[ui]"
 agente-tui
-# o: python -m agente.interfaces.tui_app
+# o: python -m interfaces.tui_app
 ```
 
 Pantalla completa en ASCII: panel de chat con scroll, panel lateral con modelo,
 herramientas, tokens y la traza de cada respuesta (pasos y herramientas usadas).
 Atajos: `Ctrl+N` nueva conversación, `Ctrl+Q` salir. Crece añadiendo widgets en
-`src/agente/interfaces/tui_app.py`, sin tocar el núcleo.
+`src/interfaces/tui_app.py`, sin tocar el núcleo.
 
 ## Estructura
 
+Un paquete por funcionalidad (lógica · construcción · interfaz):
+
 ```
-src/agente/
-├── core/          # NÚCLEO: orquestador, planner, sesión, tipos de dominio
-├── ports/         # PUERTOS: LLMClient, Tool, Memory (interfaces abstractas)
-├── infra/         # ADAPTADORES: MiniMaxClient, memoria RAM, herramientas
-├── service/       # FACHADA: AgentService (punto de entrada estable)
-├── interfaces/    # INTERFACES: adaptadores que consumen la fachada (TUI Textual, …)
-├── config/        # Settings (entorno / .env)
-└── observability/ # logging estructurado
+src/
+├── agente/            # LÓGICA DEL AGENTE (núcleo + fachada)
+│   ├── core/          #   orquestador, planner, sesión, tipos de dominio
+│   ├── ports/         #   PUERTOS: LLMClient, Tool, Memory (interfaces abstractas)
+│   ├── infra/         #   ADAPTADORES: MiniMaxClient, memoria RAM, herramientas
+│   ├── service/       #   FACHADA: AgentService (API pura, recibe sus colaboradores)
+│   ├── config/        #   Settings (entorno / .env)
+│   └── observability/ #   logging estructurado
+├── factory/           # CONSTRUCCIÓN: raíz de composición (cablea LLM + tools + memoria)
+└── interfaces/        # INTERFACES: adaptadores que consumen la fachada (CLI, TUI Textual, …)
 ```
 
-La dependencia siempre apunta al centro: `interfaces → service → core → ports`,
-y los adaptadores de `infra` implementan los puertos.
+La dependencia apunta hacia el centro: `interfaces → factory → agente`, y dentro
+del núcleo `service → core → ports`, con los adaptadores de `infra` implementando
+los puertos. Solo `factory` conoce adaptadores concretos (DIP estricto): ni el
+núcleo ni la fachada los construyen.
 
 ## Herramientas incluidas
 
@@ -102,7 +110,7 @@ La herramienta `filesystem` tiene **dos niveles de acceso**:
 ```bash
 agente-tui            # scoped: solo el directorio actual
 agente-tui -dap       # system: acceso total (menos lo bloqueado)
-python -m agente -dap "lista C:\Users\...\Documents"
+agente -dap "lista C:\Users\...\Documents"
 ```
 
 **Bloqueado en modo `system`** (carpetas de sistema): en Windows `C:\Windows`

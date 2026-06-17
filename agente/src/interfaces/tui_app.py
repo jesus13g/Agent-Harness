@@ -6,11 +6,11 @@ modelo/herramientas/tokens/traza, y caja de entrada abajo.
 Ejecutar:
     agente-tui
     # o
-    python -m agente.interfaces.tui_app
+    python -m interfaces.tui_app
 
-No forma parte del núcleo: solo instancia la fachada y llama a sus métodos.
-Estilo deliberadamente en ASCII (sin emojis): marcadores [OK]/[ERR], bordes
-en estilo 'ascii'. Crece añadiendo widgets aquí, sin tocar el núcleo.
+No forma parte del núcleo: solo recibe la fachada (vía `factory`) y llama a sus
+métodos. Estilo deliberadamente en ASCII (sin emojis): marcadores [OK]/[ERR],
+bordes en estilo 'ascii'. Crece añadiendo widgets aquí, sin tocar el núcleo.
 """
 
 from __future__ import annotations
@@ -43,9 +43,9 @@ class AgenteTUI(App):
         Binding("ctrl+q", "quit", "Salir"),
     ]
 
-    def __init__(self, service: AgentService | None = None) -> None:
+    def __init__(self, service: AgentService) -> None:
         super().__init__()
-        self._service = service or AgentService()
+        self._service = service
         self._session_id = ""
         self._total_tokens = 0
 
@@ -200,7 +200,7 @@ def main() -> None:
     # registra en stderr a nivel INFO durante run_task).
     import argparse
 
-    from agente.config.settings import Settings
+    from factory.builder import build_service, build_settings
 
     parser = argparse.ArgumentParser(
         prog="agente-tui",
@@ -213,11 +213,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    settings = Settings(log_level="CRITICAL")
-    if args.dap:
-        settings.fs_access_mode = "system"
-
-    service = AgentService(settings)
+    settings = build_settings(dap=args.dap, log_level="CRITICAL")
+    service = build_service(settings)
     AgenteTUI(service=service).run()
 
 
