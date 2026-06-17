@@ -23,11 +23,12 @@ dev = [
     "pytest-cov>=5.0",
 ]
 ui = [
-    "streamlit>=1.36",
+    "textual>=0.60",
 ]
 
 [project.scripts]
 agente = "agente.__main__:main"
+agente-tui = "agente.interfaces.tui_app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agente"]

@@ -51,16 +51,18 @@ python -m agente "¿Cuánto es 2**10?"
 python -m agente            # modo interactivo
 ```
 
-Chat web con Streamlit (otra interfaz, también adaptador delgado):
+Interfaz TUI en terminal con Textual (otra interfaz, también adaptador delgado):
 
 ```bash
 pip install -e ".[ui]"
-streamlit run src/agente/interfaces/streamlit_app.py
+agente-tui
+# o: python -m agente.interfaces.tui_app
 ```
 
-Incluye un panel de "Traza" por respuesta (pasos, herramientas usadas y tokens)
-y un botón para reiniciar la conversación. Crece añadiendo widgets en
-`src/agente/interfaces/streamlit_app.py`, sin tocar el núcleo.
+Pantalla completa en ASCII: panel de chat con scroll, panel lateral con modelo,
+herramientas, tokens y la traza de cada respuesta (pasos y herramientas usadas).
+Atajos: `Ctrl+N` nueva conversación, `Ctrl+Q` salir. Crece añadiendo widgets en
+`src/agente/interfaces/tui_app.py`, sin tocar el núcleo.
 
 ## Estructura
 
@@ -70,7 +72,7 @@ src/agente/
 ├── ports/         # PUERTOS: LLMClient, Tool, Memory (interfaces abstractas)
 ├── infra/         # ADAPTADORES: MiniMaxClient, memoria RAM, herramientas
 ├── service/       # FACHADA: AgentService (punto de entrada estable)
-├── interfaces/    # INTERFACES: adaptadores que consumen la fachada (Streamlit, …)
+├── interfaces/    # INTERFACES: adaptadores que consumen la fachada (TUI Textual, …)
 ├── config/        # Settings (entorno / .env)
 └── observability/ # logging estructurado
 ```
