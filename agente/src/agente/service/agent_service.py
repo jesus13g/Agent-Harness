@@ -4,8 +4,10 @@ Cualquier interfaz futura (CLI, REST, WebSocket, chat web) consume SOLO esta
 clase. El núcleo nunca importa código de interfaz; la dependencia va siempre
 hacia el centro.
 
-Permite inyección de dependencias (LLM, herramientas, memoria) para pruebas y
-para sustituir adaptadores sin tocar el núcleo.
+Fachada pura: NO construye adaptadores concretos. Recibe el LLM y las
+herramientas ya inyectados (DIP estricto); del cableado se encarga la raíz de
+composición (`factory`). `planner` y `memory_factory` son del núcleo y admiten
+un valor por defecto inocuo.
 """
 
 from __future__ import annotations
@@ -18,8 +20,8 @@ from agente.core.planner import Planner
 from agente.core.session import Session, new_session_id
 from agente.core.types import AgentResult, Message
 from agente.infra.memory.in_memory import InMemoryMemory
-from agente.infra.tools.registry import ToolRegistry, build_default_registry
-from agente.observability.logging import configure_logging, get_logger
+from agente.infra.tools.registry import ToolRegistry
+from agente.observability.logging import get_logger
 from agente.ports.llm_client import LLMClient
 from agente.ports.memory import Memory
 
@@ -35,16 +37,15 @@ class AgentService:
         self,
         settings: Settings | None = None,
         *,
-        llm: LLMClient | None = None,
-        tools: ToolRegistry | None = None,
+        llm: LLMClient,
+        tools: ToolRegistry,
         planner: Planner | None = None,
         memory_factory: MemoryFactory | None = None,
     ) -> None:
         self._settings = settings or Settings()
-        configure_logging(self._settings.log_level, self._settings.log_format)
 
-        self._llm = llm or self._build_default_llm()
-        self._tools = tools or build_default_registry(self._settings)
+        self._llm = llm
+        self._tools = tools
         self._planner = planner or Planner()
         self._memory_factory = memory_factory or InMemoryMemory
 
@@ -95,9 +96,3 @@ class AgentService:
         if session is None:
             raise SessionNotFoundError(f"Sesión inexistente: {session_id!r}")
         return session
-
-    def _build_default_llm(self) -> LLMClient:
-        # Import local para no acoplar la fachada al adaptador concreto en import-time.
-        from agente.infra.minimax_client import MiniMaxClient
-
-        return MiniMaxClient(self._settings)

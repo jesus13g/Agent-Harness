@@ -11,7 +11,7 @@ import asyncio
 from agente.core.types import LLMResponse, Role, ToolCall
 from agente.infra.tools.calculator import CalculatorTool
 from agente.infra.tools.registry import ToolRegistry
-from agente.interfaces.tui_app import AgenteTUI
+from interfaces.tui_app import AgenteTUI
 from agente.service.agent_service import AgentService
 
 from tests.conftest import ScriptedLLM

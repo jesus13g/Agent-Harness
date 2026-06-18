@@ -1,13 +1,14 @@
 """Adaptador CLI mínimo (ejemplo).
 
-NO forma parte del núcleo: es una interfaz delgada que demuestra el patrón de
-extensión. Solo instancia `AgentService` y llama a sus métodos. Cualquier otra
-interfaz (REST, WebSocket, chat) se construye igual, sin tocar el núcleo.
+Interfaz delgada que demuestra el patrón de extensión: construye la `AgentService`
+mediante la raíz de composición (`factory`) y solo llama a sus métodos. Cualquier
+otra interfaz (REST, WebSocket, chat) se construye igual, sin tocar el núcleo.
 
 Uso:
-    python -m agente "¿Cuánto es (12**2 + 8) / 4?"
-    python -m agente            # modo interactivo (REPL)
-    python -m agente -dap ...   # acceso total al sistema de ficheros
+    agente "¿Cuánto es (12**2 + 8) / 4?"
+    agente                       # modo interactivo (REPL)
+    agente -dap ...              # acceso total al sistema de ficheros
+    python -m interfaces.cli ... # equivalente sin instalar el script
 """
 
 from __future__ import annotations
@@ -15,15 +16,8 @@ from __future__ import annotations
 import argparse
 import sys
 
-from agente.config.settings import Settings
 from agente.service.agent_service import AgentService
-
-
-def _build_service(dap: bool) -> AgentService:
-    settings = Settings()
-    if dap:
-        settings.fs_access_mode = "system"
-    return AgentService(settings)
+from factory.builder import build_service, build_settings
 
 
 def _run_once(service: AgentService, task: str) -> int:
@@ -70,7 +64,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    service = _build_service(args.dap)
+    service = build_service(build_settings(dap=args.dap))
     if args.task:
         return _run_once(service, " ".join(args.task))
     return _repl(service)
