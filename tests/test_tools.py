@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 from pathlib import Path
 
@@ -268,6 +269,282 @@ def test_default_denied_roots_nonempty():
     if os.name == "nt":
         joined = " ".join(str(p).lower() for p in roots)
         assert "windows" in joined
+
+
+# --- FileSystem: edit, grep, stat, tree, read paginado ----------------------
+
+
+def test_filesystem_edit_replaces_unique(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="c.txt", content="hola mundo")
+    res = tool.run(operation="edit", path="c.txt", find="mundo", replace="agente")
+    assert res.ok
+    assert tool.run(operation="read", path="c.txt").content == "hola agente"
+
+
+def test_filesystem_edit_requires_unique_without_all(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="c.txt", content="a a a")
+    res = tool.run(operation="edit", path="c.txt", find="a", replace="b")
+    assert not res.ok
+    assert "3 veces" in res.error
+
+
+def test_filesystem_edit_all(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="c.txt", content="a a a")
+    res = tool.run(operation="edit", path="c.txt", find="a", replace="b", all=True)
+    assert res.ok
+    assert tool.run(operation="read", path="c.txt").content == "b b b"
+
+
+def test_filesystem_edit_missing_text(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="c.txt", content="hola")
+    res = tool.run(operation="edit", path="c.txt", find="adios", replace="x")
+    assert not res.ok
+    assert "no se encontró" in res.error.lower()
+
+
+def test_filesystem_grep_finds_in_content(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="a/uno.txt", content="rojo\nverde\nazul")
+    tool.run(operation="write", path="dos.txt", content="amarillo")
+    res = tool.run(operation="grep", path=".", regex="ver.e")
+    assert res.ok
+    assert "uno.txt:2" in res.content
+    assert "amarillo" not in res.content
+
+
+def test_filesystem_grep_filters_by_pattern(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="a.txt", content="diana")
+    tool.run(operation="write", path="a.md", content="diana")
+    res = tool.run(operation="grep", path=".", regex="diana", pattern="*.md")
+    assert res.ok
+    assert "a.md" in res.content
+    assert "a.txt" not in res.content
+
+
+def test_filesystem_grep_skips_secrets(workspace):
+    tool = FileSystemTool(root=workspace)
+    (Path(workspace) / ".env").write_text("clave_secreta", encoding="utf-8")
+    tool.run(operation="write", path="normal.txt", content="clave_secreta")
+    res = tool.run(operation="grep", path=".", regex="clave_secreta")
+    assert res.ok
+    assert "normal.txt" in res.content
+    assert ".env" not in res.content
+
+
+def test_filesystem_grep_invalid_regex(workspace):
+    tool = FileSystemTool(root=workspace)
+    res = tool.run(operation="grep", path=".", regex="[")
+    assert not res.ok
+    assert "regular" in res.error.lower()
+
+
+def test_filesystem_stat(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="12345")
+    res = tool.run(operation="stat", path="f.txt")
+    assert res.ok
+    assert "fichero" in res.content
+    assert "5 bytes" in res.content
+
+
+def test_filesystem_tree(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="a/b/hoja.txt", content="x")
+    res = tool.run(operation="tree", path=".")
+    assert res.ok
+    assert "[dir] a" in res.content
+    assert "hoja.txt" in res.content
+
+
+def test_filesystem_tree_depth_limit(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="a/b/hoja.txt", content="x")
+    res = tool.run(operation="tree", path=".", limit=1)
+    assert res.ok
+    assert "[dir] a" in res.content
+    assert "hoja.txt" not in res.content
+
+
+def test_filesystem_read_offset_limit(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="l1\nl2\nl3\nl4\n")
+    res = tool.run(operation="read", path="f.txt", offset=2, limit=2)
+    assert res.ok
+    assert "l2" in res.content and "l3" in res.content
+    assert "l1" not in res.content and "l4" not in res.content
+    assert "líneas 2-3 de 4" in res.content
+
+
+# --- FileSystem: insert / replace_lines -------------------------------------
+
+
+def test_filesystem_insert_middle(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="l1\nl3\n")
+    res = tool.run(operation="insert", path="f.txt", offset=2, content="l2")
+    assert res.ok
+    assert tool.run(operation="read", path="f.txt").content == "l1\nl2\nl3\n"
+
+
+def test_filesystem_insert_at_end(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="l1\n")
+    res = tool.run(operation="insert", path="f.txt", offset=2, content="l2")
+    assert res.ok
+    assert tool.run(operation="read", path="f.txt").content == "l1\nl2\n"
+
+
+def test_filesystem_insert_offset_out_of_range(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="l1\n")
+    res = tool.run(operation="insert", path="f.txt", offset=5, content="x")
+    assert not res.ok
+    assert "fuera de rango" in res.error.lower()
+
+
+def test_filesystem_replace_lines(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="a\nb\nc\nd\n")
+    res = tool.run(operation="replace_lines", path="f.txt", offset=2, limit=2, content="X")
+    assert res.ok
+    assert tool.run(operation="read", path="f.txt").content == "a\nX\nd\n"
+
+
+def test_filesystem_replace_lines_delete(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="a\nb\nc\n")
+    res = tool.run(operation="replace_lines", path="f.txt", offset=2, limit=1, content="")
+    assert res.ok
+    assert tool.run(operation="read", path="f.txt").content == "a\nc\n"
+
+
+def test_filesystem_replace_lines_offset_out_of_range(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="a\n")
+    res = tool.run(operation="replace_lines", path="f.txt", offset=5, limit=1, content="x")
+    assert not res.ok
+    assert "fuera de rango" in res.error.lower()
+
+
+# --- FileSystem: binarios base64 --------------------------------------------
+
+
+def test_filesystem_base64_roundtrip(workspace):
+    tool = FileSystemTool(root=workspace)
+    data = b"\x00\x01\xff\xfe binario"
+    b64 = base64.b64encode(data).decode("ascii")
+    write = tool.run(operation="write", path="bin.dat", content=b64, encoding="base64")
+    assert write.ok
+    read = tool.run(operation="read", path="bin.dat", encoding="base64")
+    assert read.ok
+    assert base64.b64decode(read.content) == data
+
+
+def test_filesystem_base64_read_rejects_offset(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="hola")
+    res = tool.run(operation="read", path="f.txt", encoding="base64", offset=1)
+    assert not res.ok
+
+
+def test_filesystem_base64_write_invalid(workspace):
+    tool = FileSystemTool(root=workspace)
+    res = tool.run(
+        operation="write", path="x.dat", content="esto no es base64 !!!", encoding="base64"
+    )
+    assert not res.ok
+    assert "base64" in res.error.lower()
+
+
+# --- FileSystem: overwrite uniforme -----------------------------------------
+
+
+def test_filesystem_write_overwrites_by_default(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="a")
+    res = tool.run(operation="write", path="f.txt", content="b")
+    assert res.ok
+    assert tool.run(operation="read", path="f.txt").content == "b"
+
+
+def test_filesystem_write_refuses_overwrite_when_disabled(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="a")
+    res = tool.run(operation="write", path="f.txt", content="b", overwrite=False)
+    assert not res.ok
+    assert "ya existe" in res.error.lower()
+
+
+def test_filesystem_copy_overwrite_flag(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="a.txt", content="x")
+    tool.run(operation="write", path="b.txt", content="y")
+    assert not tool.run(operation="copy", path="a.txt", destination="b.txt").ok
+    res = tool.run(operation="copy", path="a.txt", destination="b.txt", overwrite=True)
+    assert res.ok
+    assert tool.run(operation="read", path="b.txt").content == "x"
+
+
+def test_filesystem_move_overwrite_flag(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="a.txt", content="x")
+    tool.run(operation="write", path="b.txt", content="y")
+    assert not tool.run(operation="move", path="a.txt", destination="b.txt").ok
+    res = tool.run(operation="move", path="a.txt", destination="b.txt", overwrite=True)
+    assert res.ok
+    assert tool.run(operation="read", path="b.txt").content == "x"
+    assert not (Path(workspace) / "a.txt").exists()
+
+
+# --- FileSystem: grep contexto / multilínea ---------------------------------
+
+
+def test_filesystem_grep_context(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="a\nMATCH\nc\n")
+    res = tool.run(operation="grep", path=".", regex="MATCH", before=1, after=1)
+    assert res.ok
+    assert "f.txt:2: MATCH" in res.content
+    assert "f.txt-1- a" in res.content
+    assert "f.txt-3- c" in res.content
+
+
+def test_filesystem_grep_multiline(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="foo\nbar\n")
+    sin_ml = tool.run(operation="grep", path=".", regex="foo.bar")
+    assert "sin coincidencias" in sin_ml.content.lower()
+    con_ml = tool.run(operation="grep", path=".", regex="foo.bar", multiline=True)
+    assert con_ml.ok and "f.txt" in con_ml.content
+
+
+# --- FileSystem: stat / list enriquecidos -----------------------------------
+
+
+def test_filesystem_stat_includes_permissions(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="x")
+    res = tool.run(operation="stat", path="f.txt")
+    assert res.ok
+    assert "permisos:" in res.content
+    assert "acceso:" in res.content
+
+
+def test_filesystem_list_long_shows_size(workspace):
+    tool = FileSystemTool(root=workspace)
+    tool.run(operation="write", path="f.txt", content="12345")
+    res = tool.run(operation="list", path=".", long=True)
+    assert res.ok
+    assert "f.txt" in res.content
+    assert "5" in res.content
+    # Sin 'long' se mantiene el formato simple.
+    simple = tool.run(operation="list", path=".")
+    assert "f.txt" in simple.content
 
 
 # --- Registry ---------------------------------------------------------------
