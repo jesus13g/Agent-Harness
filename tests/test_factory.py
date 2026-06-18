@@ -38,6 +38,40 @@ def test_build_registry_with_web_search(settings):
     assert "web_search" in registry.names()
 
 
+def test_browser_force_enabled(settings):
+    settings.enable_browser = True
+    assert "browser_scraper" in build_registry(settings).names()
+
+
+def test_browser_force_disabled(settings):
+    settings.enable_browser = False
+    assert "browser_scraper" not in build_registry(settings).names()
+
+
+def test_browser_auto_follows_playwright_availability(settings, monkeypatch):
+    import importlib.util as iu
+
+    settings.enable_browser = None  # AUTO
+
+    real_find_spec = iu.find_spec
+
+    def fake_find_spec(name, *args, **kwargs):
+        if name == "playwright":
+            return object()  # simula que está instalado
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(iu, "find_spec", fake_find_spec)
+    assert "browser_scraper" in build_registry(settings).names()
+
+    def no_playwright(name, *args, **kwargs):
+        if name == "playwright":
+            return None
+        return real_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(iu, "find_spec", no_playwright)
+    assert "browser_scraper" not in build_registry(settings).names()
+
+
 def test_agent_service_requires_injected_dependencies(settings):
     # DIP estricto: la fachada no autoconstruye; exige llm y tools.
     import pytest

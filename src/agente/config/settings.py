@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     # Bloquear ficheros de secretos (.env, claves) en ambos modos.
     fs_block_secrets: bool = Field(default=True)
     enable_web_search: bool = Field(default=True)
+    enable_scraper: bool = Field(default=True)
+    # Scraper con navegador headless (Playwright).
+    #   None (por defecto) -> AUTO: se habilita si Playwright está instalado.
+    #   True  -> forzar habilitado (requiere 'pip install "agente[browser]"' +
+    #            'playwright install chromium').
+    #   False -> forzar deshabilitado.
+    enable_browser: bool | None = Field(default=None)
 
     # --- Observabilidad ---
     log_level: str = Field(default="INFO")

@@ -25,6 +25,9 @@ dev = [
 ui = [
     "textual>=0.60",
 ]
+browser = [
+    "playwright>=1.40",
+]
 
 [project.scripts]
 agente = "interfaces.cli:main"

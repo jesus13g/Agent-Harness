@@ -40,8 +40,10 @@ def build_llm(settings: Settings) -> LLMClient:
 
 def build_registry(settings: Settings) -> ToolRegistry:
     """Construye el registro con las herramientas base habilitadas por config."""
+    from agente.infra.tools.browser import BrowserScraperTool
     from agente.infra.tools.calculator import CalculatorTool
     from agente.infra.tools.filesystem import FileSystemTool
+    from agente.infra.tools.scraper import WebScraperTool
     from agente.infra.tools.web_search import WebSearchTool
 
     if settings.fs_access_mode == "system":
@@ -59,7 +61,25 @@ def build_registry(settings: Settings) -> ToolRegistry:
     ]
     if settings.enable_web_search:
         tools.append(WebSearchTool())
+    if settings.enable_scraper:
+        tools.append(WebScraperTool())
+    if _browser_enabled(settings):
+        tools.append(BrowserScraperTool())
     return ToolRegistry(tools)
+
+
+def _browser_enabled(settings: Settings) -> bool:
+    """Decide si registrar el scraper de navegador.
+
+    `enable_browser` None significa AUTO: se habilita solo si Playwright está
+    instalado, evitando que el usuario tenga que tocar un flag a mano. Un valor
+    explícito (True/False) manda sobre la detección.
+    """
+    if settings.enable_browser is not None:
+        return settings.enable_browser
+    from importlib.util import find_spec
+
+    return find_spec("playwright") is not None
 
 
 def build_service(settings: Settings) -> AgentService:

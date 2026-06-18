@@ -40,6 +40,7 @@ def settings(tmp_path) -> Settings:
         fs_root=str(tmp_path / "workspace"),
         max_steps=5,
         enable_web_search=False,
+        enable_browser=False,
         log_format="console",
     )
 
