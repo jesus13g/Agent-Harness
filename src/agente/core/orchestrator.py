@@ -43,18 +43,34 @@ class Orchestrator:
         self._tools = tools
         self._settings = settings
 
-    def run(self, memory: Memory, task: str, *, session_id: str) -> AgentResult:
+    def run(
+        self,
+        memory: Memory,
+        task: str,
+        *,
+        session_id: str,
+        force_tool: str | None = None,
+    ) -> AgentResult:
         memory.add(Message(role=Role.USER, content=task))
 
         steps: list[Step] = []
         usage_total = Usage()
         call_counter: dict[tuple[str, str], int] = {}
 
+        # Solo se fuerza una herramienta que exista; si no, se ignora (auto).
+        if force_tool and force_tool not in self._tools.names():
+            force_tool = None
+
         log = _log.bind(session_id=session_id)
-        log.info("task.start", task=task)
+        log.info("task.start", task=task, force_tool=force_tool)
 
         for index in range(1, self._settings.max_steps + 1):
-            response = self._llm.complete(memory.messages(), self._tools.specs())
+            # Forzar la herramienta solo en el primer paso; luego, auto, para que
+            # el modelo pueda procesar el resultado y dar la respuesta final.
+            tool_choice = force_tool if index == 1 else None
+            response = self._llm.complete(
+                memory.messages(), self._tools.specs(), tool_choice=tool_choice
+            )
             usage_total = usage_total + response.usage
 
             memory.add(

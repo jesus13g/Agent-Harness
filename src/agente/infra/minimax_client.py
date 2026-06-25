@@ -67,6 +67,8 @@ class MiniMaxClient(LLMClient):
         self,
         messages: list[Message],
         tools: list[ToolSpec] | None = None,
+        *,
+        tool_choice: str | None = None,
     ) -> LLMResponse:
         if not self._settings.has_api_key:
             raise ConfigError(
@@ -81,7 +83,12 @@ class MiniMaxClient(LLMClient):
         }
         if tools:
             payload["tools"] = [self._encode_tool(t) for t in tools]
-            payload["tool_choice"] = "auto"
+            # Forzar una herramienta concreta o dejar que el modelo decida.
+            payload["tool_choice"] = (
+                {"type": "function", "function": {"name": tool_choice}}
+                if tool_choice
+                else "auto"
+            )
 
         data = self._post_with_retries(payload)
         return self._decode_response(data)

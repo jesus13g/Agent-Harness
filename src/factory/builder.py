@@ -42,6 +42,8 @@ def build_registry(settings: Settings) -> ToolRegistry:
     """Construye el registro con las herramientas base habilitadas por config."""
     from agente.infra.tools.browser import BrowserScraperTool
     from agente.infra.tools.calculator import CalculatorTool
+    from agente.infra.tools.claude_code import ClaudeCodeTool
+    from agente.infra.tools.claude_code.sdk_backend import ClaudeAgentSdkBackend
     from agente.infra.tools.filesystem import FileSystemTool
     from agente.infra.tools.scraper import WebScraperTool
     from agente.infra.tools.web_search import WebSearchTool
@@ -65,6 +67,17 @@ def build_registry(settings: Settings) -> ToolRegistry:
         tools.append(WebScraperTool())
     if _browser_enabled(settings):
         tools.append(BrowserScraperTool())
+    if _claude_code_enabled(settings):
+        backend = ClaudeAgentSdkBackend(
+            model=settings.claude_code_model,
+            permission_mode=settings.claude_code_permission_mode,
+            max_turns=settings.claude_code_max_turns,
+            max_budget_usd=settings.claude_code_max_budget_usd,
+        )
+        # En scoped, el agente trabaja dentro del sandbox de ficheros; en system
+        # (-dap), sin restricción de directorio. Coherente con FileSystemTool.
+        cwd = None if settings.fs_access_mode == "system" else settings.fs_root
+        tools.append(ClaudeCodeTool(backend, cwd=cwd))
     return ToolRegistry(tools)
 
 
@@ -80,6 +93,20 @@ def _browser_enabled(settings: Settings) -> bool:
     from importlib.util import find_spec
 
     return find_spec("playwright") is not None
+
+
+def _claude_code_enabled(settings: Settings) -> bool:
+    """Decide si registrar la herramienta de delegación a Claude Code.
+
+    `enable_claude_code` None significa AUTO: se habilita solo si el Claude
+    Agent SDK está instalado. Un valor explícito (True/False) manda sobre la
+    detección. Igual que `_browser_enabled` con Playwright.
+    """
+    if settings.enable_claude_code is not None:
+        return settings.enable_claude_code
+    from importlib.util import find_spec
+
+    return find_spec("claude_agent_sdk") is not None
 
 
 def build_service(settings: Settings) -> AgentService:

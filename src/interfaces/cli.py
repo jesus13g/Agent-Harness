@@ -18,11 +18,24 @@ import sys
 
 from agente.service.agent_service import AgentService
 from factory.builder import build_service, build_settings
+from interfaces.commands import parse_command
 
 
-def _run_once(service: AgentService, task: str) -> int:
+def _dispatch(service: AgentService, session_id: str, raw: str):
+    """Parsea posibles comandos ('/claude ...') y ejecuta la tarea."""
+    task, force_tool = parse_command(raw)
+    if force_tool and not task:
+        return None  # comando sin tarea: el llamador lo trata como entrada vacía
+    return service.run_task(session_id, task, force_tool=force_tool)
+
+
+def _run_once(service: AgentService, raw: str) -> int:
     session_id = service.create_session()
-    result = service.run_task(session_id, task)
+    result = _dispatch(service, session_id, raw)
+    if result is None:
+        print("[error] indica una tarea tras el comando, p. ej. '/claude crea x'.",
+              file=sys.stderr)
+        return 1
     if result.completed:
         print(result.output)
         return 0
@@ -33,17 +46,21 @@ def _run_once(service: AgentService, task: str) -> int:
 def _repl(service: AgentService) -> int:
     session_id = service.create_session()
     print("Agente listo. Escribe una tarea (Ctrl-D o 'salir' para terminar).")
+    print("Pista: empieza con '/claude <tarea>' para delegarla en Claude Code.")
     while True:
         try:
-            task = input("› ").strip()
+            raw = input("› ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return 0
-        if task.lower() in {"salir", "exit", "quit"}:
+        if raw.lower() in {"salir", "exit", "quit"}:
             return 0
-        if not task:
+        if not raw:
             continue
-        result = service.run_task(session_id, task)
+        result = _dispatch(service, session_id, raw)
+        if result is None:
+            print("[error] indica una tarea tras el comando, p. ej. '/claude crea x'.")
+            continue
         print(result.output if result.completed else f"[error] {result.error}")
 
 

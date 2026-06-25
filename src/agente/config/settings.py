@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     #   False -> forzar deshabilitado.
     enable_browser: bool | None = Field(default=None)
 
+    # --- Claude Code (delegación de tareas de programación) ---
+    # Igual que enable_browser: None -> AUTO (se habilita si claude-agent-sdk
+    # está instalado). Requiere además Node.js + el CLI de Claude Code
+    # autenticado. La autenticación es independiente de MiniMax.
+    enable_claude_code: bool | None = Field(default=None)
+    claude_code_model: str = Field(default="claude-opus-4-8")
+    claude_code_permission_mode: str = Field(default="acceptEdits")
+    claude_code_max_turns: int = Field(default=40, gt=0)
+    claude_code_max_budget_usd: float | None = Field(default=5.0)
+
     # --- Observabilidad ---
     log_level: str = Field(default="INFO")
     log_format: str = Field(default="console")  # "json" | "console"

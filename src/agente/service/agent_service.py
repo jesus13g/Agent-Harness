@@ -65,10 +65,19 @@ class AgentService:
         _log.info("session.created", session_id=session.id)
         return session.id
 
-    def run_task(self, session_id: str, task: str) -> AgentResult:
-        """Ejecuta una tarea dentro de una sesión existente."""
+    def run_task(
+        self, session_id: str, task: str, *, force_tool: str | None = None
+    ) -> AgentResult:
+        """Ejecuta una tarea dentro de una sesión existente.
+
+        `force_tool` (opcional) fuerza el uso de una herramienta concreta en el
+        primer paso (p. ej. el comando `/claude` de las interfaces). Si la
+        herramienta no está registrada, se ignora.
+        """
         session = self._get_session(session_id)
-        return self._orchestrator.run(session.memory, task, session_id=session_id)
+        return self._orchestrator.run(
+            session.memory, task, session_id=session_id, force_tool=force_tool
+        )
 
     def get_history(self, session_id: str) -> list[Message]:
         """Historial completo de la sesión."""

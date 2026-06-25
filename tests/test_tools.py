@@ -10,6 +10,12 @@ import pytest
 
 from agente.core.types import ToolResult
 from agente.infra.tools.calculator import CalculatorTool
+from agente.infra.tools.claude_code import (
+    ClaudeCodeTool,
+    CodeAgentResult,
+    CodeAgentUnavailable,
+)
+from agente.infra.tools.claude_code.sanitize import clean_output, clean_task
 from agente.infra.tools.filesystem import FileSystemTool, default_denied_roots
 from agente.infra.tools.registry import ToolRegistry
 
@@ -545,6 +551,101 @@ def test_filesystem_list_long_shows_size(workspace):
     # Sin 'long' se mantiene el formato simple.
     simple = tool.run(operation="list", path=".")
     assert "f.txt" in simple.content
+
+
+# --- Claude Code ------------------------------------------------------------
+
+
+class _FakeBackend:
+    """Doble del CodeAgentBackend: devuelve un resultado o lanza una excepción."""
+
+    def __init__(self, *, result=None, raises=None):
+        self._result = result
+        self._raises = raises
+        self.calls = []
+
+    def run_task(self, task, *, cwd):
+        self.calls.append((task, cwd))
+        if self._raises is not None:
+            raise self._raises
+        return self._result
+
+
+def test_claude_code_success_returns_output():
+    backend = _FakeBackend(result=CodeAgentResult(output="hecho", ok=True, cost_usd=0.1))
+    tool = ClaudeCodeTool(backend, cwd="/proj")
+    res = tool.run(task="crea hola.py")
+    assert res.ok and res.content == "hecho"
+    assert backend.calls == [("crea hola.py", "/proj")]
+
+
+def test_claude_code_failure_surfaces_error():
+    backend = _FakeBackend(
+        result=CodeAgentResult(output="", ok=False, error="el test falló")
+    )
+    res = ClaudeCodeTool(backend).run(task="arregla el bug")
+    assert not res.ok
+    assert "el test falló" in res.error
+
+
+def test_claude_code_unavailable_returns_failure():
+    backend = _FakeBackend(raises=CodeAgentUnavailable("falta el SDK"))
+    res = ClaudeCodeTool(backend).run(task="haz algo")
+    assert not res.ok
+    assert "falta el SDK" in res.error
+
+
+def test_claude_code_unexpected_error_is_captured():
+    backend = _FakeBackend(raises=RuntimeError("boom"))
+    res = ClaudeCodeTool(backend).run(task="haz algo")
+    assert not res.ok
+    assert "boom" in res.error
+
+
+def test_claude_code_requires_task():
+    backend = _FakeBackend(result=CodeAgentResult(output="x"))
+    assert not ClaudeCodeTool(backend).run().ok
+    assert not ClaudeCodeTool(backend).run(task="   ").ok
+    assert backend.calls == []  # ni se invoca el backend
+
+
+# --- Claude Code: saneo de entrada/salida -----------------------------------
+
+
+def test_clean_task_strips_and_rejects_empty():
+    assert clean_task("  hola  ") == "hola"
+    assert clean_task("") == ""
+    assert clean_task(None) == ""
+    assert clean_task(123) == ""
+
+
+def test_clean_task_truncates_long_input():
+    assert len(clean_task("a" * 50_000)) == 20_000
+
+
+def test_clean_output_prefers_result_text():
+    out = clean_output(["paso intermedio"], "resumen final")
+    assert out == "resumen final"
+
+
+def test_clean_output_falls_back_to_assistant_texts():
+    out = clean_output(["linea1", "", "linea2"], None)
+    assert "linea1" in out and "linea2" in out
+
+
+def test_clean_output_collapses_blank_lines():
+    out = clean_output([], "a\n\n\n\nb")
+    assert out == "a\n\nb"
+
+
+def test_clean_output_empty_returns_placeholder():
+    assert clean_output([], None) == "(el agente no devolvió salida)"
+
+
+def test_clean_output_truncates():
+    out = clean_output([], "x" * 50_000)
+    assert "truncado" in out
+    assert len(out) <= 20_000 + 60
 
 
 # --- Registry ---------------------------------------------------------------

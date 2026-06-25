@@ -23,10 +23,13 @@ dev = [
     "pytest-cov>=5.0",
 ]
 ui = [
-    "textual>=0.60",
+    "textual[syntax]>=0.86",
 ]
 browser = [
     "playwright>=1.40",
+]
+code = [
+    "claude-agent-sdk>=0.1",
 ]
 
 [project.scripts]

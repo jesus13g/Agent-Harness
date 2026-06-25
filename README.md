@@ -95,8 +95,50 @@ núcleo ni la fachada los construyen.
 | `calculator`  | Evalúa expresiones matemáticas de forma segura (AST, sin `eval`).|
 | `filesystem`  | Lee/escribe/lista ficheros (dos niveles de acceso, ver abajo).  |
 | `web_search`  | Búsqueda web vía DuckDuckGo Instant Answer (sin clave).         |
+| `claude_code` | Delega tareas de programación a un agente Claude Code (ver abajo).|
 
 Añadir una herramienta = implementar `Tool` y registrarla; el núcleo no cambia.
+
+### Delegación a Claude Code (`claude_code`)
+
+Para tareas de programación complejas (implementar features, refactors, tests,
+depurar), el agente puede **delegar en un agente Claude Code** vía el Claude
+Agent SDK. Claude Code no sustituye al orquestador: entra como una herramienta
+más; MiniMax decide cuándo invocarla, Claude Code ejecuta su propio bucle
+(bash/read/write/edit) y devuelve un resumen que el orquestador reinyecta.
+
+Requisitos (dependencia opcional y pesada, igual que el navegador):
+
+```bash
+pip install -e ".[code]"
+npm install -g @anthropic-ai/claude-code   # CLI de Claude Code (necesita Node.js)
+```
+
+Autenticación **independiente de MiniMax**: el SDK usa el CLI de Claude Code, que
+se autentica con `ANTHROPIC_API_KEY` o con tu suscripción Claude.ai
+(`claude login`). Se habilita en AUTO si el SDK está instalado
+(`AGENTE_ENABLE_CLAUDE_CODE` lo fuerza). Configurable: `AGENTE_CLAUDE_CODE_MODEL`
+(por defecto `claude-opus-4-8`), `AGENTE_CLAUDE_CODE_PERMISSION_MODE`,
+`AGENTE_CLAUDE_CODE_MAX_TURNS`, `AGENTE_CLAUDE_CODE_MAX_BUDGET_USD`.
+
+> ⚠️ Cada llamada lanza un agente completo: es la herramienta más cara. Está
+> acotada por `max_turns`/`max_budget_usd` y por la detección de bucles del
+> orquestador. En modo `scoped` el agente trabaja dentro del directorio actual;
+> con `-dap` (system) sin restricción de directorio.
+
+El modelo puede usar `claude_code` cuando lo crea conveniente. Además, en la CLI
+y la TUI puedes **forzar** una tarea a Claude Code con el prefijo `/claude`:
+
+```bash
+agente "/claude crea utils.py con una función slugify y su test"
+agente            # en el REPL: › /claude refactoriza foo.py
+```
+
+El prefijo se procesa en la interfaz (`interfaces/commands.py`) y fuerza
+`tool_choice=claude_code` en el primer paso del orquestador; MiniMax sigue
+coordinando y resume el resultado (mantiene memoria y traza de la sesión). Si la
+herramienta no está disponible, el forzado se ignora y la tarea sigue en modo
+automático.
 
 ## Modelo de seguridad — niveles de acceso a ficheros
 

@@ -1,0 +1,149 @@
+/* Estilos de la TUI del agente (tema: ruby-charcoal-twilight).
+   Las variables $primary/$secondary/$accent/... las aporta el Theme. */
+
+Screen {
+    background: $background;
+}
+
+/* --- Divisor decorativo bajo el header --- */
+#top-rule {
+    color: $secondary;
+    margin: 0 1;
+}
+
+/* --- Cuerpo: chat | divisor | panel lateral --- */
+#body {
+    height: 1fr;
+}
+
+#chat {
+    width: 3fr;
+    border: round $secondary;
+    border-title-color: $accent;
+    border-title-align: left;
+    padding: 1 2;
+    margin: 0 1;
+    background: $surface;
+    scrollbar-size: 1 1;
+    scrollbar-color: $secondary;
+    scrollbar-color-hover: $accent;
+    scrollbar-color-active: $primary;
+    scrollbar-background: $surface;
+}
+
+#body-rule {
+    width: 1;
+    color: $secondary;
+    height: 1fr;
+}
+
+#side {
+    width: 1fr;
+    border: round $secondary;
+    border-title-color: $accent;
+    border-title-align: left;
+    padding: 1 1;
+    margin: 0 1;
+    background: $surface;
+    scrollbar-size: 1 1;
+    scrollbar-color: $secondary;
+    scrollbar-color-hover: $accent;
+    scrollbar-background: $surface;
+}
+
+#side.hidden {
+    display: none;
+}
+
+#side DataTable {
+    background: $surface;
+    height: auto;
+}
+
+#side DataTable > .datatable--header {
+    background: $panel;
+    color: $accent;
+    text-style: bold;
+}
+
+#side DataTable > .datatable--cursor {
+    background: $panel;
+}
+
+/* --- Mensajes de chat (burbujas por rol) --- */
+ChatMessage {
+    height: auto;
+    margin: 1 0 0 0;
+    padding: 0 1;
+}
+
+ChatMessage .bubble-role {
+    text-style: bold;
+}
+
+ChatMessage.msg-user {
+    border-left: thick $accent;
+    color: $foreground;
+}
+
+ChatMessage.msg-user .bubble-role {
+    color: $accent;
+}
+
+ChatMessage.msg-assistant {
+    border-left: thick $primary;
+}
+
+ChatMessage.msg-assistant .bubble-role {
+    color: $primary;
+}
+
+ChatMessage.msg-error {
+    border-left: thick $error;
+    color: $error;
+}
+
+ChatMessage.msg-tool {
+    border-left: thick $secondary;
+    color: $text-muted;
+    margin: 0 0 0 2;
+}
+
+ChatMessage.msg-system {
+    color: $text-muted;
+    text-style: italic;
+}
+
+/* Markdown renderizado dentro de una burbuja de respuesta */
+ChatMessage Markdown {
+    background: transparent;
+    margin: 0;
+    padding: 0;
+}
+
+/* --- Barra de estado inferior --- */
+#status-bar {
+    height: 1;
+    background: $panel;
+    color: $foreground;
+    padding: 0 1;
+    margin: 0 1;
+}
+
+/* --- Input y hint de comandos --- */
+#prompt {
+    border: round $secondary;
+    margin: 0 1;
+    background: $surface;
+}
+
+#prompt:focus {
+    border: round $accent;
+}
+
+#hint {
+    height: 1;
+    color: $text-muted;
+    padding: 0 2;
+    margin: 0 1;
+}

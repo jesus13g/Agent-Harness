@@ -1,7 +1,9 @@
 """Interfaz TUI con Textual (adaptador delgado sobre AgentService).
 
-Pantalla completa en terminal: panel de chat con scroll, panel lateral con
-modelo/herramientas/tokens/traza, y caja de entrada abajo.
+Pantalla completa en terminal con identidad visual propia (tema *Ruby Charcoal
+Twilight*): panel de chat con burbujas por rol y Markdown renderizado, panel
+lateral en formato tabla, barra de estado inferior, spinner + efecto typewriter
+y notificaciones toast.
 
 Ejecutar:
     agente-tui
@@ -9,8 +11,8 @@ Ejecutar:
     python -m interfaces.tui_app
 
 No forma parte del núcleo: solo recibe la fachada (vía `factory`) y llama a sus
-métodos. Estilo deliberadamente en ASCII (sin emojis): marcadores [OK]/[ERR],
-bordes en estilo 'ascii'. Crece añadiendo widgets aquí, sin tocar el núcleo.
+métodos. La identidad visual vive en `tui_theme` y `tui_app.tcss`; los widgets a
+medida en `tui_widgets`. Crece añadiendo widgets aquí, sin tocar el núcleo.
 """
 
 from __future__ import annotations
@@ -18,28 +20,28 @@ from __future__ import annotations
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
-from textual.widgets import Footer, Header, Input, RichLog, Static
+from textual.containers import Horizontal, VerticalScroll
+from textual.suggester import SuggestFromList
+from textual.widgets import Footer, Header, Input, Rule, Static
 
 from agente.core.types import AgentResult, StepType
 from agente.errors import AgenteError
 from agente.service.agent_service import AgentService
+from interfaces import tui_theme as T
+from interfaces.commands import SLASH_TOOLS, parse_command
+from interfaces.tui_widgets import ChatMessage, SidePanel, StatusBar
 
 
 class AgenteTUI(App):
     """App TUI de chat con el agente orquestador."""
 
-    TITLE = "Agente - orquestador"
-
-    CSS = """
-    #body { height: 1fr; }
-    #chat { width: 3fr; border: ascii $accent; padding: 0 1; }
-    #side { width: 1fr; border: ascii $accent; padding: 0 1; }
-    #prompt { border: ascii $accent; }
-    """
+    TITLE = "Agente"
+    SUB_TITLE = "orquestador de IA"
+    CSS_PATH = "tui_app.tcss"
 
     BINDINGS = [
-        Binding("ctrl+n", "new_session", "Nueva conversacion"),
+        Binding("ctrl+n", "new_session", "Nueva conversación"),
+        Binding("ctrl+b", "toggle_side", "Panel lateral"),
         Binding("ctrl+q", "quit", "Salir"),
     ]
 
@@ -48,31 +50,60 @@ class AgenteTUI(App):
         self._service = service
         self._session_id = ""
         self._total_tokens = 0
+        self._last_steps: int | str = "-"
+        self._pending: ChatMessage | None = None
 
     # ------------------------------------------------------------------ #
     # Composición y arranque
     # ------------------------------------------------------------------ #
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
+        yield Header(show_clock=True)
+        yield Rule(id="top-rule", line_style="heavy")
         with Horizontal(id="body"):
-            yield RichLog(id="chat", wrap=True, markup=False, highlight=False)
-            yield Static(id="side")
-        yield Input(placeholder="Escribe una tarea y pulsa Enter", id="prompt")
+            yield VerticalScroll(id="chat")
+            yield Rule(orientation="vertical", id="body-rule", line_style="heavy")
+            yield SidePanel(id="side")
+        yield StatusBar(id="status-bar")
+        suggester = SuggestFromList(
+            [f"{cmd} " for cmd in SLASH_TOOLS], case_sensitive=False
+        )
+        yield Input(
+            placeholder="Escribe una tarea y pulsa Enter  (prueba /claude …)",
+            id="prompt",
+            suggester=suggester,
+        )
+        yield Static(
+            "Enter enviar  ·  Ctrl+N nueva  ·  Ctrl+B panel  ·  Ctrl+Q salir",
+            id="hint",
+        )
         yield Footer()
 
     def on_mount(self) -> None:
+        self.register_theme(T.RUBY_CHARCOAL_TWILIGHT)
+        self.theme = T.THEME_NAME
+
+        self._chat().border_title = "conversación"
+        self.query_one("#side", SidePanel).border_title = "panel"
+
         self._session_id = self._service.create_session()
-        self._update_side()
-        log = self._chat()
-        log.write("Escribe una tarea abajo y pulsa Enter.")
-        log.write("Atajos: Ctrl+N nueva conversacion, Ctrl+Q salir.")
+        self._refresh_side()
+        self._set_state(T.STATE_READY)
+
+        self._add_message(
+            "system",
+            "Bienvenido. Escribe una tarea abajo y pulsa Enter.",
+            label="·",
+        )
         if not self._service.settings.has_api_key:
-            log.write(
-                "[ERR] Falta AGENTE_MINIMAX_API_KEY en .env; las tareas fallaran "
-                "hasta configurarla."
+            self.notify(
+                "Falta AGENTE_MINIMAX_API_KEY en .env; las tareas fallarán.",
+                title="Configuración",
+                severity="warning",
+                timeout=8,
             )
-        log.write("")
+        else:
+            self.notify("Sesión lista.", title="Agente", severity="information")
         self._prompt().focus()
 
     # ------------------------------------------------------------------ #
@@ -80,27 +111,42 @@ class AgenteTUI(App):
     # ------------------------------------------------------------------ #
 
     @on(Input.Submitted, "#prompt")
-    def _on_submit(self, event: Input.Submitted) -> None:
-        task = event.value.strip()
-        if not task:
+    async def _on_submit(self, event: Input.Submitted) -> None:
+        raw = event.value.strip()
+        if not raw:
             return
+
+        task, force_tool = parse_command(raw)
+        if force_tool and not task:
+            self.notify(
+                "Indica una tarea tras el comando, p. ej. '/claude crea x'.",
+                title="Comando incompleto",
+                severity="warning",
+            )
+            return
+
         prompt = self._prompt()
         prompt.value = ""
         prompt.disabled = True
 
-        log = self._chat()
-        log.write(f"tu> {task}")
-        log.write("    (pensando...)")
-        self._run_task(task)
+        await self._mount(ChatMessage("user", raw))
+        self._pending = ChatMessage("assistant")
+        await self._mount(self._pending)
+        self._pending.start_spinner()
+        self._set_state(T.STATE_THINKING)
+
+        self._run_task(task, force_tool)
 
     # ------------------------------------------------------------------ #
-    # Trabajo en hilo (run_task es sincrono y hace I/O de red)
+    # Trabajo en hilo (run_task es síncrono y hace I/O de red)
     # ------------------------------------------------------------------ #
 
     @work(thread=True, exclusive=True)
-    def _run_task(self, task: str) -> None:
+    def _run_task(self, task: str, force_tool: str | None = None) -> None:
         try:
-            result = self._service.run_task(self._session_id, task)
+            result = self._service.run_task(
+                self._session_id, task, force_tool=force_tool
+            )
         except AgenteError as exc:
             self.call_from_thread(self._show_error, f"Error del agente: {exc}")
             return
@@ -114,37 +160,59 @@ class AgenteTUI(App):
     # ------------------------------------------------------------------ #
 
     def _show_result(self, result: AgentResult) -> None:
-        log = self._chat()
-        if result.completed:
-            log.write(f"ia> {result.output}")
-        else:
-            log.write(f"[ERR] {result.error}")
+        pending = self._pending
+        self._pending = None
 
-        log.write(
-            f"    traza: {len(result.steps)} pasos, {result.usage.total_tokens} tokens"
+        if not result.completed:
+            if pending is not None:
+                pending.stop_spinner()
+                pending.remove()
+            self._show_error(result.error or "tarea no completada")
+            return
+
+        output = result.output or ""
+        if pending is not None:
+            pending.typewriter(output, on_done=lambda: pending.render_markdown(output))
+        else:
+            self._add_message("assistant", output)
+
+        self._render_trace(result)
+
+        self._total_tokens += result.usage.total_tokens
+        self._last_steps = len(result.steps)
+        self._refresh_side()
+        self._set_state(T.STATE_OK)
+        self.notify(
+            f"{len(result.steps)} pasos · {result.usage.total_tokens} tokens",
+            title="Tarea completada",
+            severity="information",
         )
+        self._enable_input()
+
+    def _render_trace(self, result: AgentResult) -> None:
         for step in result.steps:
             if step.type is StepType.TOOL:
-                mark = "[OK]" if step.detail.get("ok") else "[ERR]"
+                ok = step.detail.get("ok")
+                glyph = T.TOOL_OK if ok else T.TOOL_ERR
+                color = "#5FB37A" if ok else T.RUBY
                 res = (step.detail.get("result", "") or "").replace("\n", " ")[:80]
-                log.write(
-                    f"      {mark} {step.detail.get('tool')}"
-                    f"({step.detail.get('arguments')}) -> {res}"
+                tool = step.detail.get("tool")
+                self._add_message(
+                    "tool",
+                    f"[{color}]{glyph}[/] [b]{tool}[/] → {res}",
+                    label="traza",
                 )
             else:
                 calls = step.detail.get("tool_calls") or []
                 if calls:
-                    names = [c["name"] for c in calls]
-                    log.write(f"      * razona -> pide: {names}")
-        log.write("")
-
-        self._total_tokens += result.usage.total_tokens
-        self._update_side()
-        self._enable_input()
+                    names = ", ".join(c["name"] for c in calls)
+                    self._add_message("tool", f"razona → pide: {names}", label="traza")
 
     def _show_error(self, message: str) -> None:
-        self._chat().write(f"[ERR] {message}")
-        self._chat().write("")
+        self._pending = None
+        self._add_message("error", message)
+        self._set_state(T.STATE_ERROR)
+        self.notify(message, title="Error", severity="error", timeout=8)
         self._enable_input()
 
     # ------------------------------------------------------------------ #
@@ -155,44 +223,66 @@ class AgenteTUI(App):
         self._service.close_session(self._session_id)
         self._session_id = self._service.create_session()
         self._total_tokens = 0
-        log = self._chat()
-        log.clear()
-        log.write("(nueva conversacion)")
-        log.write("")
-        self._update_side()
+        self._last_steps = "-"
+        self._pending = None
+        chat = self._chat()
+        chat.remove_children()
+        self._add_message("system", "Nueva conversación.", label="·")
+        self._refresh_side()
+        self._set_state(T.STATE_READY)
+        self.notify("Nueva conversación iniciada.", title="Agente")
         self._enable_input()
+
+    def action_toggle_side(self) -> None:
+        self.query_one("#side", SidePanel).toggle_class("hidden")
 
     # ------------------------------------------------------------------ #
     # Utilidades de UI
     # ------------------------------------------------------------------ #
 
-    def _chat(self) -> RichLog:
-        return self.query_one("#chat", RichLog)
+    def _chat(self) -> VerticalScroll:
+        return self.query_one("#chat", VerticalScroll)
 
     def _prompt(self) -> Input:
         return self.query_one("#prompt", Input)
+
+    async def _mount(self, message: ChatMessage) -> None:
+        await self._chat().mount(message)
+        self._chat().scroll_end(animate=False)
+
+    def _add_message(self, role: str, text: str, *, label: str | None = None) -> None:
+        """Monta un mensaje estático (sin spinner/typewriter) y baja el scroll."""
+        self._chat().mount(ChatMessage(role, text, label=label))
+        self._chat().scroll_end(animate=False)
 
     def _enable_input(self) -> None:
         prompt = self._prompt()
         prompt.disabled = False
         prompt.focus()
 
-    def _update_side(self) -> None:
+    def _set_state(self, state: tuple[str, str]) -> None:
         s = self._service.settings
-        lines = [
-            "AGENTE",
-            f"modelo: {s.model}",
-            f"max pasos: {s.max_steps}",
-            "",
-            "herramientas:",
-        ]
-        lines += [f"  - {name}" for name in self._service.list_tools()]
-        mode = "system (-dap)" if s.fs_access_mode == "system" else "scoped"
-        lines += ["", f"modo fs: {mode}"]
-        lines += ["", f"tokens (sesion): {self._total_tokens}"]
-        if not s.has_api_key:
-            lines += ["", "AVISO: falta", "AGENTE_MINIMAX_API_KEY", "en .env"]
-        self.query_one("#side", Static).update("\n".join(lines))
+        fs_mode = "system" if s.fs_access_mode == "system" else "scoped"
+        self.query_one("#status-bar", StatusBar).set_status(
+            state=state,
+            model=s.model,
+            fs_mode=fs_mode,
+            steps=self._last_steps,
+            tokens=self._total_tokens,
+        )
+
+    def _refresh_side(self) -> None:
+        s = self._service.settings
+        fs_mode = "system (-dap)" if s.fs_access_mode == "system" else "scoped"
+        self.query_one("#side", SidePanel).refresh_data(
+            model=s.model,
+            max_steps=s.max_steps,
+            fs_mode=fs_mode,
+            tokens=self._total_tokens,
+            tools=self._service.list_tools(),
+            commands=[(prefix, tool) for prefix, tool in SLASH_TOOLS.items()],
+            has_api_key=s.has_api_key,
+        )
 
 
 def main() -> None:

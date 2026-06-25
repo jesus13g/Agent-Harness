@@ -21,13 +21,17 @@ class ScriptedLLM(LLMClient):
     def __init__(self, responses: list[LLMResponse]) -> None:
         self._responses = list(responses)
         self.calls: list[tuple[list[Message], list[ToolSpec] | None]] = []
+        self.tool_choices: list[str | None] = []
 
     def complete(
         self,
         messages: list[Message],
         tools: list[ToolSpec] | None = None,
+        *,
+        tool_choice: str | None = None,
     ) -> LLMResponse:
         self.calls.append((list(messages), tools))
+        self.tool_choices.append(tool_choice)
         if not self._responses:
             raise AssertionError("ScriptedLLM se quedó sin respuestas programadas.")
         return self._responses.pop(0)

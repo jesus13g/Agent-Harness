@@ -93,6 +93,48 @@ def test_tool_error_is_reinjected(settings):
     assert "ERROR" in tool_msgs[0]
 
 
+# --- Forzar herramienta (comando /claude) ----------------------------------
+
+
+def test_force_tool_only_on_first_step(settings):
+    llm = ScriptedLLM(
+        [
+            LLMResponse(tool_calls=[ToolCall(id="c1", name="calculator", arguments={"expression": "2+2"})]),
+            LLMResponse(content="Cuatro."),
+        ]
+    )
+    orch = Orchestrator(llm, _registry(), settings)
+    result = orch.run(InMemoryMemory(), "suma", session_id="f1", force_tool="calculator")
+
+    assert result.completed and result.output == "Cuatro."
+    # Forzado en el primer paso, auto en el segundo.
+    assert llm.tool_choices == ["calculator", None]
+
+
+def test_force_unknown_tool_is_ignored(settings):
+    llm = ScriptedLLM([LLMResponse(content="hola")])
+    orch = Orchestrator(llm, _registry(), settings)
+    orch.run(InMemoryMemory(), "hola", session_id="f2", force_tool="inexistente")
+
+    # La herramienta no existe -> no se fuerza nada (auto).
+    assert llm.tool_choices == [None]
+
+
+def test_run_task_passes_force_tool(settings):
+    llm = ScriptedLLM(
+        [
+            LLMResponse(tool_calls=[ToolCall(id="c1", name="calculator", arguments={"expression": "1+1"})]),
+            LLMResponse(content="Dos."),
+        ]
+    )
+    service = AgentService(settings, llm=llm, tools=_registry())
+    sid = service.create_session()
+    result = service.run_task(sid, "suma", force_tool="calculator")
+
+    assert result.completed
+    assert llm.tool_choices[0] == "calculator"
+
+
 # --- Fachada ---------------------------------------------------------------
 
 

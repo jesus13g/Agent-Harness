@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 
+from textual.widgets import DataTable
+
 from agente.core.types import LLMResponse, Role, ToolCall
 from agente.infra.tools.calculator import CalculatorTool
 from agente.infra.tools.registry import ToolRegistry
@@ -55,9 +57,14 @@ def test_tui_mounts_and_lists_tools(settings):
     async def scenario() -> None:
         async with app.run_test() as pilot:
             await pilot.pause()
-            # El panel lateral muestra la herramienta registrada.
-            side = app.query_one("#side").render()
-            assert "calculator" in str(side)
+            # El panel lateral (DataTable) lista la herramienta registrada.
+            table = app.query_one("#side-table", DataTable)
+            cells = [
+                str(table.get_cell_at((r, c)))
+                for r in range(table.row_count)
+                for c in range(len(table.columns))
+            ]
+            assert any("calculator" in cell for cell in cells)
             # Se creó una sesión al montar.
             assert app._session_id
 

@@ -87,6 +87,35 @@ def test_parses_tool_call_response():
     assert call.arguments == {"expression": "2+2"}
 
 
+def test_tool_choice_auto_by_default():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    tools = [ToolSpec(name="calculator", description="calc", parameters={"type": "object"})]
+    _client(handler).complete([Message(role=Role.USER, content="x")], tools)
+    assert captured["body"]["tool_choice"] == "auto"
+
+
+def test_tool_choice_forces_named_function():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    tools = [ToolSpec(name="claude_code", description="cc", parameters={"type": "object"})]
+    _client(handler).complete(
+        [Message(role=Role.USER, content="x")], tools, tool_choice="claude_code"
+    )
+    assert captured["body"]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "claude_code"},
+    }
+
+
 def test_4xx_raises_llm_error():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, text="unauthorized")
